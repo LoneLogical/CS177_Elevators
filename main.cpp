@@ -14,6 +14,8 @@ long ELEVS;
 const long day_length = 120;
 const long TINY = 0.001;
 const long GRND = 0;
+const long UP = 1;
+const long DOWN = 0;
 long elevID = 0;
 long* elev_loc;
 bool* want_up;
@@ -135,11 +137,18 @@ void passenger(long whereami, long wheretogo) {
     want_off[myElev][wheretogo] = true;
     //release facility
     update_workload.release();
+    //let elevator know that you are properly boarded
+    (*boarded)[myElev].set();
     //wait for correct departure event
     while (elev_loc[myElev] != wheretogo) {
         (*here_is_floor)[myElev].wait();
     }
+    //queue up to get off the elevator
     (*get_off)[myElev].queue();
+    //hold for time it takes to get off
+    
+    //let people know that you are off
+    (*unloaded)[myElev].set();
     
     return;
 }
@@ -159,6 +168,72 @@ void elevator(long myID) {
 
     //
 
+    return;
+}
+
+void unloading(long myID, long whereami, long& num_ppl) {
+    //let all passengers see our location
+    elev_loc[myID] = whereami;
+    //tell them we've reached a new destination
+    (*here_is_floor)[myID].set();
+    //let passengers queue up for the disembark
+    hold(TINY);
+    //unload passengers
+    while ((*get_off)[myElev].queue_cnt() > 0) {
+        //set the event for one person to get off
+        (*get_off)[myElev].set();
+        //wait until they are off
+        (*unloaded)[myElev].wait();
+        --num_ppl;
+    }
+    //need to reset the control unit
+    update_workload.reserve();
+    want_off[myID][whereami] = false;
+
+    return;
+}
+
+void loading(long myID, long whereami, long& num_ppl, long direction) {
+    //let all passengers see our location
+    elev_loc[myID] = whereami;
+    //pick up people going in correct direction
+    if (direction == UP) {    
+        while ((*mb_up)[whereami].queue_cnt() > 0 ) {
+            //pass in elevator ID to waiting passenger
+            (*mb_up)[whereami].send(myID);
+            //let someone board the elevator
+            (*going_up)[myID].set();
+            //wait until boarded
+            (*boarded)[myID].wait();
+            ++num_ppl;
+        }
+        //reserve facility
+        update_workload.reserve();
+        //reset the up call at this floor
+        want_up[whereami] = false;
+        //release facility
+        update_workload.release();
+    }
+    else if (direction == DOWN) {
+        while ((*mb_down)[whereami].queue_cnt() > 0 ) {
+            //pass in elevator ID to waiting passenger
+            (*mb_down)[whereami].send(myID);
+            //let someone board the elevator
+            (*going_down)[myID].set();
+            //wait until boarded
+            (*boarded)[myID].wait();
+            ++num_ppl;
+        }
+        //reserve facility
+        update_workload.reserve();
+        //reset the up call at this floor
+        want_down[whereami] = false;
+        //release facility
+        update_workload.release();
+    }
+    else {
+        cout << "ERROR: Elevator need a correct direction!" << endl;
+    }
     return;
 }
 
