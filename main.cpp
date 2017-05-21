@@ -16,17 +16,25 @@ const long TINY = 0.001;
 const long GRND = 0;
 long elevID = 0;
 long* elev_loc;
+bool* want_up;
+bool* want_down;
+bool* want_off;
 
 //Global CSIM Constructs
-mailbox_set * elev_buttons;
-event_set * going_up;
-event_set * going_down;
-event_set * here_is_floor;
+facility update_workload("update_Work");
+
+mailbox_set *mb_up;
+mailbox_set *mb_down;
+event_set *going_up;
+event_set *going_down;
+event_set *here_is_floor;
 
 //Global functions
 void floor(long);
 void passenger(long,long);
 void elevator(long);
+void loading();
+void unloading();
 
 
 
@@ -87,13 +95,51 @@ void passenger(long whereami, long wheretogo) {
     create(myName);
 
     //reserve update_workload facility
+    update_workload.reserve();
     //set wakeup event and correct call button
+    if (wheretogo > wherami) {
+        want_up[whereami] = true;
+    }
+    else if (wheretogo < whereami) {
+        want_down[whereami] = true;
+    }
+    else {
+        cout << "ERROR: passsenger's wheretogo == whereami" << endl;
+    }
     //release the update_workload facility
-    //wait for correct boarding event
+    update_workload.release();
+    //wait for elevator to arrive and pass its ID
+    long myElev;
+    if (wheretogo > whereami) {
+        (*mb_up)[whereami].receive(&myElev);
+    }
+    else if (wheretogo < whereami) {
+        (*mb_down)[whereami].receive(&myElev);
+    }
+    else {
+        cout << "ERROR: passsenger's wheretogo == whereami" << endl;   
+    }
+    //wait for proper boarding event before getting on elevator
+    if (wheretogo > whereami) {
+        (*going_up)[myElev].queue();
+    }
+    else if (wheretogo < whereami) {
+        (*going_down)[myElev].queue();
+    }
+    else {
+        cout << "ERROR: passsenger's wheretogo == whereami" << endl;   
+    }
     //reserve update_workload faciity
+    update_workload.reserve();
     //set its departure floor
+    want_off[myElev][wheretogo] = true;
     //release facility
+    update_workload.release();
     //wait for correct departure event
+    while (elev_loc[myElev] != wheretogo) {
+        (*here_is_floor)[myElev].wait();
+    }
+    (*get_off)[myElev].queue();
     
     return;
 }
