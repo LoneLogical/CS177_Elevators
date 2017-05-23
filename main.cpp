@@ -9,7 +9,7 @@
 #include <string.h>
 
 //Global Variables
-long FLOORS;
+long FLOORS = 21;
 long ELEVS;
 const long day_length = 120;
 const long TINY = 0.001;
@@ -30,13 +30,16 @@ mailbox_set *mb_down;
 event_set *going_up;
 event_set *going_down;
 event_set *here_is_floor;
+event_set *boarded;
+event_set *unloaded;
 
 //Global functions
 void floor(long);
 void passenger(long,long);
+void control_unit(long);
 void elevator(long);
-void loading();
-void unloading();
+void loading(long,long,long&,long);
+void unloading(long,long,long&);
 
 
 
@@ -48,10 +51,13 @@ extern "C" void sim() {
     //ask for user input about program's particulars
     
     //dynamically creat csim constructs
-    elev_buttons = new mailbox_set("elevButtons",FLOORS);
+    mb_up = new mailbox_set("mb_up",FLOORS);
+    mb_down = new mailbox_set("mb_down",FLOORS);
     going_up = new event_set("goingUP",ELEVS);
     going_down = new event_set("goingDWN",ELEVS);
     here_is_floor = new event_set("hereIsFlr",ELEVS);
+    boarded = new event_set("boarded",ELEVS);
+    unloaded = new event_set("unloaded",ELEVS);
 
     
     //create the floor processes that spawn the passengers
@@ -59,10 +65,9 @@ extern "C" void sim() {
         floor(i);
     }
 
-    //create the elevators to pick up passengers
-    for (long i = 0; i < ELEVS; i++) {
-        elevator(i);
-    }
+    //create the control unit for the elevators
+    //     control unit will create elevators
+    control_unit();
 
     //hold for the whole day
     hold(day_length);
@@ -80,10 +85,10 @@ void floor(long whichami) {
         //wait certain amount of time before spawns passenger
         hold(uniform(4,10));
         //stochastically determine where the passenger goes
-        long wheretogo = uniform(0,FLOORS);
+        long wheretogo = uniform(0,FLOORS - 1);
         //make sure they go to a different floor than where they start
         while (wheretogo == whichami) {
-            wheretogo = uniform(0,FLOORS);
+            wheretogo = uniform(0,FLOORS - 1);
         }
         //call to make this passenger
         passenger(whichami,wheretogo);
@@ -153,9 +158,30 @@ void passenger(long whereami, long wheretogo) {
     return;
 }
 
+void control_unit() {
+    create("C.U.");
+
+    for (long i = 0; i < ELEVS; i++) {
+        elevator(i);
+    }
+
+    while (clock() < day_length) {
+        
+
+    } 
+
+    return;
+}
+
 void elevator(long myID) {
+    const char* myName = ("Elev" + to_string(myID)).c_str();
+    create(myName);
+    //start out at the ground level with no passengers
+    elev_loc[myID] = 0;
+    long num_ppl = 0;
+    //wait until wake_up event
+    wake_up.wait();
     
-    //wait for event to wake up
     
     //decide which elevator is closest
     
@@ -171,6 +197,73 @@ void elevator(long myID) {
     return;
 }
 
+void elev_trip_up (long myID, long& whereami, long pickup, long& num_ppl) {
+    //know you're first destination for pickup of drop off
+    long wheretogo = 0;
+    long wheretopick;
+    long wheretodrop;
+    //while anyone needs pick up or drop off in UP direction
+    bool needPickUp = any_pick_up();
+    bool needDropOff = any_drop_off(myID,whereami,UP,wheretodrop);
+    while (needPickUp || needDropOff) {
+        //if have ppl, check where they want to be let off at
+        if (num_ppl > 0) {
+            //find nearest drop off  
+            if ( any_drop_off(myID,whereami,UP,wheretogo) ) {
+                //which is closer, first pickup or first drop off
+                if (wheretogo > pickup) {
+                    wheretogo = pickup;
+                }
+                //else wheretogo is still your drop off
+            }
+        }
+        //hold until you can get there
+        hold( 5 * sqrt(abs(wheretogo - whereami)) );
+        whereami = wheretogo;
+
+        if (want_off[myID][whereami]) {
+            unloading(myID,whereami,num_ppl);
+        }
+
+        if (want_up[whereami]) {
+            loading(myID,whereami,UP,num_ppl);
+        }
+
+
+    return;
+}
+
+void elev_trip_down() {
+
+    return;
+}
+
+bool any_drop_off(long myID,long whereami, long direction, long& wheretogo) {
+    bool dropping_off = false;
+
+    if (direction == UP) {
+        for (long i = whereami; i < FLOORS; i++) {
+            if (want_off[myID][i]) {
+                if (!dropping_off) { 
+                    dropping_off = true;
+                    wheretogo = i;
+                }
+            }
+        }
+    }
+    else {
+        for (long i = whereami; i >= GRND; i--) {
+            if (want_off[myID][i]) {
+                if (!dropping_off) {
+                    dropping_off = true;
+                    wheretogo = i;
+                }
+            }
+        }
+    }
+
+    return dropping_off;
+}
 void unloading(long myID, long whereami, long& num_ppl) {
     //let all passengers see our location
     elev_loc[myID] = whereami;
