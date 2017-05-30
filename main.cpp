@@ -50,7 +50,7 @@ class Elevator {
         Elevator();
         long get_Loc() {return Location;};
         long get_Dest() {return Destination;};
-        long Direction() {return Direction;};
+        long get_Dir() {return Direction;};
         void set_Loc(long& loc) {Location = loc;};
         void set_Dest(long& dest) {Destination = dest;};
         void set_Dir(long& dir) {Direction = dir;};
@@ -201,7 +201,7 @@ void elevator(long myID) {
         //wait until wake_up event
         wake_up.wait();
         //
-
+        
         
 
     }
@@ -209,10 +209,49 @@ void elevator(long myID) {
     return;
 }
 
+void control_unit(long myID, long& whereami) {
+    //look through want_up and want_down arrays for people
+    //at the same time, look through elev_scheduler arrays to see
+    //    which elevator is already going to that floor
+    // elev_schedule_up[Elevs]
+    // elev_schedule_down[Elevs]
+
+    long dest
+
+
+    return;
+}
+
+void elev_move_to(long myID, long& whereami, long& dest, long& dir) {
+    //instead of entire trip up or down, sometimes we want to be able to move 
+    //  from one location to another in order to pick people up.
+    
+    //update elev destination
+    update_workload.reserve();
+    ElevCU.at(myID)->set_Loc(whereami);
+    ElevCU.at(myID)->set_Dest(dest);
+    ElevCU.at(myID)->set_Dir(dir);
+    update_workload.release();
+
+    //hold until elev gets to destination
+    long time_int = 5 * sqrt( abs(dest - whereami) );
+    hold(time_int);
+
+    //update elev destination
+    update_workload.reserve();
+    whereami = dest;
+    ElevCU.at(myID)->set_Loc(whereami);
+    ElevCU.at(myID)->set_Dest(dest);
+    ElevCU.at(myID)->set_Dir(dir);
+    update_workload.release();
+
+    return;
+}
+
 
 void elev_trip_up (long myID, long& whereami, long& num_ppl) {
     //know you're first destination for pickup of drop off
-    long wheretogo = -1;
+    long wheretogo = whereami;
     long wheretopick;
     long wheretodrop;
     //while anyone needs pick up or drop off in UP direction
@@ -260,7 +299,7 @@ void elev_trip_up (long myID, long& whereami, long& num_ppl) {
 
 void elev_trip_down(long myID, long& whereami, long& num_ppl) {
     //know you're first destination for pickup of drop off
-    long wheretogo = -1;
+    long wheretogo = whereami;
     long wheretopick;
     long wheretodrop;
     //while anyone needs pick up or drop off in UP direction
@@ -384,7 +423,9 @@ bool any_pick_up(long myID, long whereami, long direction, long& wheretogo) {
 
 void unloading(long myID, long whereami, long& num_ppl) {
     //let all passengers see our location
-    elev_loc[myID] = whereami;
+    update_workload.reserve();
+    ElevCU.at(myID)->set_Loc = whereami;
+    update_workload.release();
     //tell them we've reached a new destination
     (*here_is_floor)[myID].set();
     //let passengers queue up for the disembark
