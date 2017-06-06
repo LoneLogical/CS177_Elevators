@@ -8,11 +8,14 @@
 #include "cpp.h"
 #include <string.h>
 #include <vector>
+#include <cmath>
+
+using namespace std;
 
 //Global Variables
-const long FLOORS = 21;
-long ELEVS;
-const long day_length = 120;
+const long FLOORS = 7;
+const long ELEVS = 1;
+const long day_length = 60;
 const long TINY = 0.001;
 const long GRND = 0;
 const long UP = 1;
@@ -20,7 +23,7 @@ const long DOWN = 0;
 const long ASLEEP = 2;
 bool* want_up;
 bool* want_down;
-bool* want_off;
+bool** want_off;
 
 //Global CSIM Constructs
 facility update_workload("update_Work");
@@ -32,14 +35,21 @@ event_set *going_down;
 event_set *here_is_floor;
 event_set *boarded;
 event_set *unloaded;
+event_set *get_off;
+event wake_up("wake_up");
 
 //Global functions
 void floor(long);
 void passenger(long,long);
-void control_unit(long);
 void elevator(long);
+void elev_move_to(long,long&,long&,long&);
+void elev_trip_up(long,long&,long&);
+void elev_trip_down(long,long&,long&);
+bool any_drop_off(long,long,long,long&);
+bool any_pick_up(long,long,long,long&);
 void loading(long,long,long&,long);
 void unloading(long,long,long&);
+
 
 class Elevator {
     private:
@@ -68,11 +78,12 @@ Elevator::Elevator() {
 extern "C" void sim() {
 
     create("sim");
+
+    trace_on();
     //add histogram
     
     //ask for user input about program's particulars
-    cout << "Num of elevators: ";
-    cin >> ELEVS;
+    
 
     //dynamically creat csim constructs
     mb_up = new mailbox_set("mb_up",FLOORS);
@@ -82,7 +93,24 @@ extern "C" void sim() {
     here_is_floor = new event_set("hereIsFlr",ELEVS);
     boarded = new event_set("boarded",ELEVS);
     unloaded = new event_set("unloaded",ELEVS);
+    get_off = new event_set("get off",ELEVS);
+    want_up = new bool[FLOORS];
+    want_down = new bool[FLOORS];
+    want_off = new bool*[ELEVS];
+    for (long i = 0; i < ELEVS; i++) {
+        want_off[i] = new bool[FLOORS];
+    }
 
+    for (long i = 0; i < ELEVS; i++) {
+        for (long j = 0; j < FLOORS; j++) {
+            want_off[i][j] = false;
+        }
+    }
+
+    for (long i = 0; i < FLOORS; i++) {
+        want_up[i] = false;
+        want_down[i] = false;
+    }
     
     //create the floor processes that spawn the passengers
     for (long i = 0; i < FLOORS; i++) {
@@ -100,7 +128,9 @@ extern "C" void sim() {
 
     //hold for the whole day
     hold(day_length);
-
+    
+    trace_off();
+    report_mailboxes();
     report();
 
 }
@@ -112,7 +142,7 @@ void floor(long whichami) {
     
     while (clock < day_length) {
         //wait certain amount of time before spawns passenger
-        hold(uniform(4,10));
+        hold(uniform(6,12));
         //stochastically determine where the passenger goes
         long wheretogo = uniform(0,FLOORS - 1);
         //make sure they go to a different floor than where they start
@@ -133,7 +163,7 @@ void passenger(long whereami, long wheretogo) {
     //reserve update_workload facility
     update_workload.reserve();
     //set wakeup event and correct call button
-    if (wheretogo > wherami) {
+    if (wheretogo > whereami) {
         want_up[whereami] = true;
     }
     else if (wheretogo < whereami) {
@@ -177,7 +207,7 @@ void passenger(long whereami, long wheretogo) {
     //let elevator know that you are properly boarded
     (*boarded)[myElev].set();
     //wait for correct departure event
-    while (ElevCU.at(myElev)->get_Location() != wheretogo) {
+    while (ElevCU.at(myElev)->get_Loc() != wheretogo) {
         (*here_is_floor)[myElev].wait();
     }
     //queue up to get off the elevator
@@ -196,31 +226,53 @@ void elevator(long myID) {
     create(myName);
     //start out at the ground level with no passengers
     long num_ppl = 0;
-    
-    while(clock() < day_length) {
+    long whereami = GRND;
+    long wheretogo = GRND;
+    long direction = UP;
+    long last_trip;
+    bool needed = false;
+
+    while(clock < day_length) {
         //wait until wake_up event
         wake_up.wait();
-        //
-        
-        
+        //find who needs picking up
+        for (long i = GRND; i < FLOORS - 1; i++) {
+            if (want_up[i]) {
+                wheretogo = i;
+                direction = UP;
+                needed = true;
+                break;
+            }
+            else if (want_down[i]) {
+                wheretogo = i;
+                direction = DOWN;
+                needed = true;
+                break;
+            }
+        }
 
+        while( (clock < day_length) && (needed) ) {
+            elev_move_to(myID,whereami,wheretogo,direction);
+            if (direction == UP) {
+                elev_trip_up(myID,whereami,num_ppl);
+                //next direction
+                direction == DOWN;
+                //grab anyone above you who also wants a trip down
+                needed = any_pick_up(myID,FLOORS-1,DOWN,wheretogo);
+            }
+            else {
+                elev_trip_down(myID,whereami,num_ppl);
+                //next direction
+                direction == UP;
+                //grab anyone below you who also wants a trip UP
+                needed = any_pick_up(myID,GRND,UP,wheretogo);
+            } 
+        } 
     }
 
     return;
 }
 
-void control_unit(long myID, long& whereami) {
-    //look through want_up and want_down arrays for people
-    //at the same time, look through elev_scheduler arrays to see
-    //    which elevator is already going to that floor
-    // elev_schedule_up[Elevs]
-    // elev_schedule_down[Elevs]
-
-    long dest
-
-
-    return;
-}
 
 void elev_move_to(long myID, long& whereami, long& dest, long& dir) {
     //instead of entire trip up or down, sometimes we want to be able to move 
@@ -287,7 +339,7 @@ void elev_trip_up (long myID, long& whereami, long& num_ppl) {
         }
         //then let people get on
         if (want_up[whereami]) {
-            loading(myID,whereami,UP,num_ppl);
+            loading(myID,whereami,num_ppl,UP);
         }
         //find out where the elevator should go next
         needPickUp = any_pick_up(myID,whereami,UP,wheretopick);
@@ -302,7 +354,7 @@ void elev_trip_down(long myID, long& whereami, long& num_ppl) {
     long wheretogo = whereami;
     long wheretopick;
     long wheretodrop;
-    //while anyone needs pick up or drop off in UP direction
+    //while anyone needs pick up or drop off in DOWN direction
     bool needPickUp = any_pick_up(myID,whereami,DOWN,wheretopick);
     bool needDropOff = any_drop_off(myID,whereami,DOWN,wheretodrop);
     while (needPickUp || needDropOff) {
@@ -335,7 +387,7 @@ void elev_trip_down(long myID, long& whereami, long& num_ppl) {
         }
         //then let people get on
         if (want_down[whereami]) {
-            loading(myID,whereami,DOWN,num_ppl);
+            loading(myID,whereami,num_ppl,DOWN);
         }
         //find out where the elevator should go next
         needPickUp = any_pick_up(myID,whereami,DOWN,wheretopick);
@@ -386,7 +438,8 @@ bool any_drop_off(long myID, long whereami, long direction, long& wheretogo) {
 bool any_pick_up(long myID, long whereami, long direction, long& wheretogo) {
     bool picking_up = false;
     
-    if (direction == UP) {
+    if (direction == UP || direction == ASLEEP) {
+        //
         for (long i = whereami; i < FLOORS; i++) {
             if (want_up[i]) {
                 if (!picking_up) { 
@@ -401,7 +454,7 @@ bool any_pick_up(long myID, long whereami, long direction, long& wheretogo) {
         }
     }
     else if (direction == DOWN) {
-        for (long i = whereami; i >= GRND; i--) {
+        for (long i = whereami; i > GRND; i--) {
             if (want_down[i]) {
                 if (!picking_up) {
                     picking_up = true;
@@ -415,7 +468,7 @@ bool any_pick_up(long myID, long whereami, long direction, long& wheretogo) {
         }
     }
     else {
-        cout << "ERROR in any_pick_up: SLEEPING Elev trying to access function" << endl; 
+        cout << "ERROR in any_pick_up: undefined direction" << endl; 
     }
 
     return picking_up;
@@ -424,18 +477,18 @@ bool any_pick_up(long myID, long whereami, long direction, long& wheretogo) {
 void unloading(long myID, long whereami, long& num_ppl) {
     //let all passengers see our location
     update_workload.reserve();
-    ElevCU.at(myID)->set_Loc = whereami;
+    ElevCU.at(myID)->set_Loc(whereami);
     update_workload.release();
     //tell them we've reached a new destination
     (*here_is_floor)[myID].set();
     //let passengers queue up for the disembark
     hold(TINY);
     //unload passengers
-    while ((*get_off)[myElev].queue_cnt() > 0) {
+    while ((*get_off)[myID].queue_cnt() > 0) {
         //set the event for one person to get off
-        (*get_off)[myElev].set();
+        (*get_off)[myID].set();
         //wait until they are off
-        (*unloaded)[myElev].wait();
+        (*unloaded)[myID].wait();
         --num_ppl;
     }
     //need to reset the control unit
@@ -447,7 +500,9 @@ void unloading(long myID, long whereami, long& num_ppl) {
 
 void loading(long myID, long whereami, long& num_ppl, long direction) {
     //let all passengers see our location
-    elev_loc[myID] = whereami;
+    update_workload.reserve();
+    ElevCU.at(myID)->set_Loc(whereami);
+    update_workload.release();
     //pick up people going in correct direction
     if (direction == UP) {    
         while ((*mb_up)[whereami].queue_cnt() > 0 ) {
