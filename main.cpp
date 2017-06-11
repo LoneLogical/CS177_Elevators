@@ -287,22 +287,53 @@ void elev_move_to(long myID, long& whereami, long& dest, long dir) {
     update_workload.reserve();
     ElevCU.at(myID)->set_Loc(whereami);
     ElevCU.at(myID)->set_Dest(dest);
-    ElevCU.at(myID)->set_Dir(dir);
     update_workload.release();
 
     //hold until elev gets to destination
-    long time_int = 2 * sqrt( abs(dest - whereami) );
-    hold(time_int);
+    long orig_time_int = 2 * sqrt( abs(dest - whereami) );
+    long start_time = clock;
+    //time wait for event
+    long result = wake_up.timed_wait(orig_time_int);
+    long halt_int = clock - start_time;
+
+    while(result != TIMED_OUT) {
+        
+        //find: where they are and what direction
+        long pass_loc;
+        long pass_dir;
+        if (attempt_pick_up(myID, pass_loc, pass_dir)) {
+            long time_to_pass = 2 * sqrt(abs(pass_loc - whereami));
+            //eventually have formal calc for time it takes to halt safely
+            long time_to_halt = 0.7;
+            if (halt_int + time_to_halt <= time_to_pass) {
+                //able to stop, so set new destination
+                orig_time_int = time_to_pass;
+                dest = pass_loc;
+                update_workload.reserve();
+                ElevCU.at(myID)->set_Dest(dest);
+                update_workload.release();
+            }
+            //else -> not able to stop in time
+        }
+        //else -> not correct direction or out of range
+        //sleep again
+        result = wake_up.timed_wait(orig_time_int - halt_int);
+        halt_int = clock - start_time;
+    }
 
     //update elev destination
     update_workload.reserve();
     whereami = dest;
     ElevCU.at(myID)->set_Loc(whereami);
-    ElevCU.at(myID)->set_Dest(dest);
-    ElevCU.at(myID)->set_Dir(dir);
     update_workload.release();
 
     return;
+}
+
+bool attempt_pick_up(long myID, long& pass_loc, long& pass_dir) {
+    bool pick_up = false;
+
+    return pick_up;
 }
 
 
